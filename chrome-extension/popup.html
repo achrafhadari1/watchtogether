@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Watch Together Video Detector</title>
+  <style>
+    body {
+      width: 350px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      padding: 16px;
+      margin: 0;
+    }
+    
+    h1 {
+      font-size: 18px;
+      margin-top: 0;
+      margin-bottom: 16px;
+      color: #333;
+    }
+    
+    .form-group {
+      margin-bottom: 12px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #555;
+    }
+    
+    input, select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    
+    button {
+      background-color: #7c3aed;
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      width: 100%;
+    }
+    
+    button:hover {
+      background-color: #6d28d9;
+    }
+    
+    button:disabled {
+      background-color: #d1d5db;
+      cursor: not-allowed;
+    }
+    
+    .status {
+      margin-top: 12px;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    
+    .success {
+      background-color: #d1fae5;
+      color: #065f46;
+    }
+    
+    .error {
+      background-color: #fee2e2;
+      color: #b91c1c;
+    }
+    
+    .video-list {
+      margin-top: 16px;
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+    }
+    
+    .video-item {
+      padding: 8px;
+      border-bottom: 1px solid #e5e7eb;
+      font-size: 12px;
+      cursor: pointer;
+      word-break: break-all;
+    }
+    
+    .video-item:hover {
+      background-color: #f3f4f6;
+    }
+    
+    .video-item:last-child {
+      border-bottom: none;
+    }
+    
+    .no-videos {
+      padding: 12px;
+      text-align: center;
+      color: #6b7280;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Watch Together Video Detector</h1>
+  
+  <div class="form-group">
+    <label for="roomId">Room ID</label>
+    <input type="text" id="roomId" placeholder="Enter room ID">
+  </div>
+  
+  <div class="form-group">
+    <label for="videoTitle">Video Title (optional)</label>
+    <input type="text" id="videoTitle" placeholder="Enter video title">
+  </div>
+  
+  <div class="form-group">
+    <label for="videoUrl">Selected Video URL</label>
+    <input type="text" id="videoUrl" placeholder="No video selected" readonly>
+  </div>
+  
+  <button id="sendButton" disabled>Send Video to Room</button>
+  
+  <div id="status" class="status" style="display: none;"></div>
+  
+  <div class="video-list" id="videoList">
+    <div class="no-videos">No videos detected yet. Browse a page with videos.</div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
