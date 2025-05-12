@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 /**
  * Reconstruct a proxied URL
+ * Equivalent to getProxiedUrl from proxy-utils.js, but inline to avoid importing
  */
 function getProxiedUrl(url) {
   if (!url) return null;
@@ -35,24 +36,20 @@ export async function GET(request) {
     }
 
     const headers = new Headers();
-
-    // Set common headers
     headers.set(
       "User-Agent",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     );
+    headers.set("Origin", "https://twoseven.xyz");
+    headers.set("Referer", "https://www.cineby.app/");
+    headers.set("x-twoseven-ext-tab-media", "1");
     headers.set("Accept", "*/*");
-    headers.set("Accept-Language", "en-US,en;q=0.9");
+    headers.set("Accept-Language", "en-US,en;q=0.5");
     headers.set("Accept-Encoding", "gzip, deflate, br");
     headers.set("Connection", "keep-alive");
-    headers.set("Cache-Control", "no-cache");
-    headers.set("Pragma", "no-cache");
-
-    // Set streaming-specific headers
-    if (request.headers.get("x-stream-type") === "hls") {
-      headers.set("Origin", "https://www.cineby.app");
-      headers.set("Referer", "https://www.cineby.app/");
-    }
+    headers.set("Sec-Fetch-Dest", "empty");
+    headers.set("Sec-Fetch-Mode", "cors");
+    headers.set("Sec-Fetch-Site", "cross-site");
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -60,7 +57,6 @@ export async function GET(request) {
     const response = await fetch(decodedUrl, {
       headers,
       signal: controller.signal,
-      credentials: "omit",
     }).finally(() => clearTimeout(timeoutId));
 
     if (!response.ok) {
@@ -79,40 +75,25 @@ export async function GET(request) {
     const contentType = response.headers.get("content-type");
     const isM3U8 =
       contentType?.includes("application/vnd.apple.mpegurl") ||
-      contentType?.includes("application/x-mpegurl") ||
-      contentType?.includes("audio/x-mpegurl") ||
       decodedUrl.endsWith(".m3u8");
 
     let body;
 
     if (isM3U8) {
       const text = await response.text();
-      const baseUrl = new URL(decodedUrl);
-      const baseDir = baseUrl.href.substring(
-        0,
-        baseUrl.href.lastIndexOf("/") + 1
-      );
 
-      // Process M3U8 content
+      // Rewrite segment URLs inside the playlist
+      const baseUrl = new URL(decodedUrl);
       const rewritten = text.replace(/^(?!#)(.+)$/gm, (line) => {
         line = line.trim();
         if (!line || line.startsWith("#")) return line;
 
         try {
-          // Handle different URL formats
-          let absoluteUrl;
-          if (line.startsWith("http://") || line.startsWith("https://")) {
-            absoluteUrl = line;
-          } else if (line.startsWith("//")) {
-            absoluteUrl = baseUrl.protocol + line;
-          } else if (line.startsWith("/")) {
-            absoluteUrl = `${baseUrl.protocol}//${baseUrl.host}${line}`;
-          } else {
-            absoluteUrl = new URL(line, baseDir).href;
-          }
+          // Ensure relative paths are resolved correctly
+          const absoluteUrl = new URL(line, baseUrl).href;
           return getProxiedUrl(absoluteUrl);
         } catch (e) {
-          console.warn("Failed to process M3U8 line:", line, e);
+          console.warn("Failed to parse line:", line, e);
           return line;
         }
       });
@@ -122,26 +103,18 @@ export async function GET(request) {
       body = await response.arrayBuffer();
     }
 
-    // Set response headers
     const responseHeaders = {
       "Content-Type": contentType || "application/octet-stream",
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": [
-        "Content-Type",
-        "Authorization",
-        "Origin",
-        "Referer",
-        "X-Stream-Type",
-        "X-Original-Url",
-      ].join(", "),
+      "Access-Control-Allow-Headers":
+        "Content-Type, Authorization, Origin, Referer, x-twoseven-ext-tab-media",
       "Cache-Control": "no-cache, no-store, must-revalidate",
       Pragma: "no-cache",
       Expires: "0",
-      Vary: "Origin",
+      Vary: "Origin, Accept-Encoding",
     };
 
-    // Forward relevant headers
     const forwardHeaders = [
       "content-length",
       "content-encoding",
@@ -149,7 +122,6 @@ export async function GET(request) {
       "last-modified",
       "etag",
     ];
-
     forwardHeaders.forEach((header) => {
       const value = response.headers.get(header);
       if (value) responseHeaders[header] = value;
@@ -163,7 +135,7 @@ export async function GET(request) {
     if (error.name === "AbortError") {
       console.error("Request timed out:", error);
       return NextResponse.json(
-        { error: "Request timed out", url },
+        { error: "Request timed out", url: url },
         { status: 504 }
       );
     }
@@ -171,14 +143,14 @@ export async function GET(request) {
     if (error.name === "TypeError" && error.message.includes("fetch")) {
       console.error("Network error:", error);
       return NextResponse.json(
-        { error: "Network error - Unable to reach target server", url },
+        { error: "Network error - Unable to reach target server", url: url },
         { status: 502 }
       );
     }
 
     console.error("Unexpected proxy error:", error);
     return NextResponse.json(
-      { error: "Internal server error", message: error.message, url },
+      { error: "Internal server error", message: error.message, url: url },
       { status: 500 }
     );
   }
@@ -190,14 +162,8 @@ export async function OPTIONS() {
     headers: {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": [
-        "Content-Type",
-        "Authorization",
-        "Origin",
-        "Referer",
-        "X-Stream-Type",
-        "X-Original-Url",
-      ].join(", "),
+      "Access-Control-Allow-Headers":
+        "Content-Type, Authorization, Origin, Referer, x-twoseven-ext-tab-media",
       Vary: "Origin",
     },
   });
