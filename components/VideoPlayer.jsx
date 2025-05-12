@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useRef } from "react";
 import { getSocket } from "@/lib/socket";
 import { Button } from "@/components/ui/button";
@@ -19,6 +17,8 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
   const ignoreNextStateChange = useRef(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [currentVideoUrl, setCurrentVideoUrl] = useState(videoUrl);
+  const retryCount = useRef(0);
+  const maxRetries = 3;
 
   useEffect(() => {
     const socket = getSocket();
@@ -54,7 +54,6 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
       if (roomState.videoUrl) {
         setCurrentVideoUrl(roomState.videoUrl);
 
-        // Delay seeking until after player is initialized
         setTimeout(() => {
           if (playerRef.current && roomState.currentTime != null) {
             playerRef.current.currentTime = roomState.currentTime;
@@ -63,7 +62,7 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
               playerRef.current.play().catch(() => {});
             }
           }
-        }, 500); // slight delay to ensure player is ready
+        }, 500);
       }
     };
 
@@ -76,7 +75,6 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
     socket.on("room-state", handleRoomState);
     socket.on("video-url", handleVideoUrl);
 
-    // Request current room state when component mounts
     socket.emit("get-room-state", { roomId });
 
     return () => {
@@ -97,16 +95,17 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
       playerRef.current = null;
     }
     setIsInitialized(false);
+    retryCount.current = 0;
   };
 
-  useEffect(() => {
+  const initializePlayer = async () => {
     if (!currentVideoUrl || !videoRef.current) return;
 
-    cleanup();
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    const initTimer = setTimeout(() => {
-      try {
+      // Ensure that the video element exists before initializing the player
+      if (videoRef.current) {
         playerRef.current = new Plyr(videoRef.current, {
           controls: [
             "play-large",
@@ -127,74 +126,103 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
             options: [4320, 2880, 2160, 1440, 1080, 720, 576, 480, 360, 240],
           },
         });
+      }
 
-        const proxiedUrl = getProxiedUrl(currentVideoUrl);
+      const proxiedUrl = getProxiedUrl(currentVideoUrl);
 
-        if (proxiedUrl.includes(".m3u8") && Hls.isSupported()) {
-          const hls = new Hls({
-            enableWorker: false,
-            lowLatencyMode: true,
-            xhrSetup: function (xhr, url) {
-              proxyHlsRequest(xhr, url);
-            },
-          });
+      if (proxiedUrl.includes(".m3u8") && Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: false,
+          lowLatencyMode: true,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 600,
+          maxBufferSize: 60 * 1000 * 1000,
+          maxBufferHole: 0.5,
+          liveSyncDuration: 3,
+          liveMaxLatencyDuration: 10,
+          liveDurationInfinity: true,
+          xhrSetup: function (xhr, url) {
+            proxyHlsRequest(xhr, url);
+          },
+        });
 
-          hls.loadSource(proxiedUrl);
-          hls.attachMedia(videoRef.current);
+        hls.loadSource(proxiedUrl);
+        hls.attachMedia(videoRef.current);
 
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            setLoading(false);
-            setIsInitialized(true);
-          });
-
-          hls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-              switch (data.type) {
-                case Hls.ErrorTypes.NETWORK_ERROR:
-                  toast.error("Network error while loading video");
-                  hls.startLoad();
-                  break;
-                case Hls.ErrorTypes.MEDIA_ERROR:
-                  toast.error("Media error while playing video");
-                  hls.recoverMediaError();
-                  break;
-                default:
-                  toast.error("Failed to load video stream");
-                  hls.destroy();
-                  break;
-              }
-            }
-          });
-
-          hlsRef.current = hls;
-        } else {
-          videoRef.current.src = proxiedUrl;
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setLoading(false);
           setIsInitialized(true);
-        }
+        });
 
-        if (playerRef.current) {
-          playerRef.current.on("timeupdate", () => {
-            const now = Date.now();
-            if (now - lastStateUpdate.current > 2000) {
-              broadcastVideoState();
-              lastStateUpdate.current = now;
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            console.error("HLS Error:", data);
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                if (retryCount.current < maxRetries) {
+                  retryCount.current++;
+                  console.log(
+                    `Retrying (${retryCount.current}/${maxRetries})...`
+                  );
+                  hls.startLoad();
+                } else {
+                  toast.error("Failed to load video after multiple attempts");
+                  cleanup();
+                }
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
+                if (retryCount.current < maxRetries) {
+                  retryCount.current++;
+                  console.log(
+                    `Retrying (${retryCount.current}/${maxRetries})...`
+                  );
+                  hls.loadSource(proxiedUrl);
+                  hls.startLoad();
+                } else {
+                  toast.error("Failed to load video stream");
+                  cleanup();
+                }
+                break;
             }
-          });
+          }
+        });
 
-          playerRef.current.on("seeking", broadcastVideoState);
-          playerRef.current.on("play", () => broadcastVideoState(true));
-          playerRef.current.on("pause", () => broadcastVideoState(false));
-        }
-      } catch (error) {
-        console.error("Error initializing video player:", error);
-        toast.error("Failed to initialize video player");
+        hlsRef.current = hls;
+      } else {
+        videoRef.current.src = proxiedUrl;
         setLoading(false);
+        setIsInitialized(true);
       }
-    }, 100);
 
+      // Ensure the player state is only updated after initialization
+      if (playerRef.current) {
+        playerRef.current.on("timeupdate", () => {
+          const now = Date.now();
+          if (now - lastStateUpdate.current > 2000) {
+            broadcastVideoState();
+            lastStateUpdate.current = now;
+          }
+        });
+
+        playerRef.current.on("seeking", broadcastVideoState);
+        playerRef.current.on("play", () => broadcastVideoState(true));
+        playerRef.current.on("pause", () => broadcastVideoState(false));
+      }
+    } catch (error) {
+      console.error("Error initializing video player:", error);
+      toast.error("Failed to initialize video player");
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    cleanup();
+    const timer = setTimeout(initializePlayer, 100);
     return () => {
-      clearTimeout(initTimer);
+      clearTimeout(timer);
       cleanup();
     };
   }, [currentVideoUrl]);
