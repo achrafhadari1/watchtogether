@@ -3,7 +3,14 @@
   "name": "Watch Together Video Detector",
   "version": "1.0",
   "description": "Detect video streams and send them to Watch Together rooms",
-  "permissions": ["activeTab", "webRequest", "storage"],
+  "permissions": [
+    "activeTab",
+    "webRequest",
+    "storage",
+    "tabs",
+    "scripting",
+    "activeTab"
+  ],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"

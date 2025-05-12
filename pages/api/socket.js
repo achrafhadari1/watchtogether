@@ -1,7 +1,8 @@
 import { Server } from "socket.io";
 
 // Store room states in memory (shared across function calls)
-const rooms = new Map();
+const rooms = global.rooms || new Map();
+global.rooms = rooms;
 
 export default function handler(req, res) {
   if (!res.socket.server.io) {

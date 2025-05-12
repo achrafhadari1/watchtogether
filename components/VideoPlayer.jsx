@@ -8,6 +8,7 @@ import Hls from "hls.js";
 import Plyr from "plyr";
 import "plyr/dist/plyr.css";
 import { toast } from "sonner";
+import { getProxiedUrl, proxyHlsRequest } from "@/lib/proxy-utils";
 
 export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
   const videoRef = useRef(null);
@@ -23,6 +24,7 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
     const socket = getSocket();
     socket.emit("join-room", { roomId, userName: "Guest" });
     socket.emit("get-room-state", { roomId });
+
     const handleVideoState = (state) => {
       if (!playerRef.current || ignoreNextStateChange.current) {
         ignoreNextStateChange.current = false;
@@ -85,49 +87,6 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
     };
   }, [roomId]);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    let hls;
-
-    if (Hls.isSupported() && videoUrl) {
-      hls = new Hls();
-      hls.loadSource(videoUrl);
-      hls.attachMedia(video);
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        playerRef.current = new Plyr(video, {
-          captions: { active: true, update: true, language: "en" },
-        });
-      });
-
-      // Optional: forward subtitle tracks to Plyr
-      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event, data) => {
-        console.log("Subtitle tracks found:", data.subtitleTracks);
-
-        // Remove old <track> elements
-        const videoEl = videoRef.current;
-        const existingTracks = videoEl.querySelectorAll("track");
-        existingTracks.forEach((track) => track.remove());
-
-        data.subtitleTracks.forEach((track, index) => {
-          const trackEl = document.createElement("track");
-          trackEl.kind = "subtitles";
-          trackEl.label = track.name || `Track ${index + 1}`;
-          trackEl.srclang = track.lang || "en";
-          trackEl.default = index === 0;
-          trackEl.src = track.url;
-
-          videoEl.appendChild(trackEl);
-        });
-
-        // Tell Plyr to refresh its tracks UI
-        if (playerRef.current) {
-          playerRef.current.toggleCaptions(true);
-        }
-      });
-    }
-  }, [videoUrl]);
-
   const cleanup = () => {
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -169,13 +128,18 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
           },
         });
 
-        if (currentVideoUrl.includes(".m3u8") && Hls.isSupported()) {
+        const proxiedUrl = getProxiedUrl(currentVideoUrl);
+
+        if (proxiedUrl.includes(".m3u8") && Hls.isSupported()) {
           const hls = new Hls({
             enableWorker: false,
             lowLatencyMode: true,
+            xhrSetup: function (xhr, url) {
+              proxyHlsRequest(xhr, url);
+            },
           });
 
-          hls.loadSource(currentVideoUrl);
+          hls.loadSource(proxiedUrl);
           hls.attachMedia(videoRef.current);
 
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -204,7 +168,7 @@ export default function VideoPlayer({ roomId, videoUrl, subtitlesUrl }) {
 
           hlsRef.current = hls;
         } else {
-          videoRef.current.src = currentVideoUrl;
+          videoRef.current.src = proxiedUrl;
           setLoading(false);
           setIsInitialized(true);
         }
